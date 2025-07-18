@@ -1,0 +1,18 @@
+{
+  "name": "loginradius-assignment",
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "license": "ISC",
+  "packageManager": "bun@1.2.15",
+  "devDependencies": {
+    "turbo": "^2.5.5"
+  }
+}
