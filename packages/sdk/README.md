@@ -1,0 +1,1 @@
+This is generated SDK for Auth API
