@@ -52,20 +52,33 @@ export class AnomalyService {
         ipBlocked = await this.checkPermanentIpBlock(ipAddress);
       }
 
-      // Handle user-level rate limiting (keep in database for 15-minute window)
+      // Handle user-level rate limiting - create a new key for every request
       let userSuspended = false;
       if (userId) {
-        // Record user-level attempt in database
-        await db.insertInto('anomalies').values({
-          id: crypto.randomUUID(),
-          user_id: userId,
-          ip_address: ipAddress,
-          anomaly_type: 'user_login_ratelimited',
-          created_at: new Date(),
-          updated_at: new Date()
-        }).execute();
-
-        userSuspended = await this.checkUserSuspension(userId);
+        const userRateLimitKey = `user_ratelimit:${userId}:${currentTimestamp}`;
+        
+        // Create a new key for this user request with 15-minute TTL
+        await CacheClient.set(userRateLimitKey, '1', this.USER_LOCKOUT_MINUTES * 60);
+        
+        // Count how many keys exist for this user
+        const userKeys = await CacheClient.keys(`user_ratelimit:${userId}:*`);
+        const userAttempts = userKeys.length;
+        
+        // Check if user should be suspended
+        if (userAttempts >= this.USER_ATTEMPT_THRESHOLD) {
+          // Record user suspension in database
+          await db.insertInto('anomalies').values({
+            id: crypto.randomUUID(),
+            user_id: userId,
+            ip_address: ipAddress,
+            anomaly_type: 'user_login_ratelimited',
+            created_at: new Date(),
+            updated_at: new Date()
+          }).execute();
+          
+          userSuspended = true;
+          infoLogs(`User ${userId} suspended after ${userAttempts} attempts in 15-minute window`, LogTypes.LOGS, 'AnomalyService');
+        }
       }
 
       infoLogs(
@@ -83,18 +96,9 @@ export class AnomalyService {
 
   static async getUserFailedAttempts(userId: string): Promise<number> {
     try {
-      const db = await DB.getInstance();
-      const cutoffTime = new Date(Date.now() - this.USER_LOCKOUT_MINUTES * 60 * 1000); // Use 15 minutes for user lockout
-
-      const failedAttempts = await db
-        .selectFrom('anomalies')
-        .select(['id'])
-        .where('user_id', '=', userId)
-        .where('anomaly_type', '=', 'user_login_ratelimited')
-        .where('created_at', '>=', cutoffTime)
-        .execute();
-
-      return failedAttempts.length;
+      // Count Redis keys for this user instead of database queries
+      const userKeys = await CacheClient.keys(`user_ratelimit:${userId}:*`);
+      return userKeys.length;
     } catch (error) {
       infoLogs(`Error checking user failed attempts: ${error}`, LogTypes.ERROR, 'AnomalyService');
       return 0;
@@ -103,11 +107,13 @@ export class AnomalyService {
 
   static async isUserSuspended(userId: string): Promise<boolean> {
     try {
-      const failedAttempts = await this.getUserFailedAttempts(userId);
-      const isSuspended = failedAttempts >= this.USER_ATTEMPT_THRESHOLD;
+      // Check current rate limit by counting keys in Redis
+      const userKeys = await CacheClient.keys(`user_ratelimit:${userId}:*`);
+      const attemptCount = userKeys.length;
+      const isSuspended = attemptCount >= this.USER_ATTEMPT_THRESHOLD;
       
       if (isSuspended) {
-        infoLogs(`User ${userId} is suspended. Failed attempts: ${failedAttempts}`, LogTypes.LOGS, 'AnomalyService');
+        infoLogs(`User ${userId} is suspended. Current attempts: ${attemptCount}`, LogTypes.LOGS, 'AnomalyService');
       }
 
       return isSuspended;
@@ -163,21 +169,6 @@ export class AnomalyService {
     }
   }
 
-  private static async checkUserSuspension(userId: string): Promise<boolean> {
-    const db = await DB.getInstance();
-    const cutoffTime = new Date(Date.now() - this.USER_LOCKOUT_MINUTES * 60 * 1000); // Use 15 minutes for user lockout
-
-    const failedAttempts = await db
-      .selectFrom('anomalies')
-      .select(['id'])
-      .where('user_id', '=', userId)
-      .where('anomaly_type', '=', 'user_login_ratelimited')
-      .where('created_at', '>=', cutoffTime)
-      .execute();
-
-    return failedAttempts.length >= this.USER_ATTEMPT_THRESHOLD;
-  }
-
   // Admin utility methods
   static async getAllAnomalies() {
     try {
@@ -219,8 +210,6 @@ export class AnomalyService {
 
       const uniqueUsers = new Set(allAnomalies.filter(a => a.user_id).map(a => a.user_id)).size;
       const uniqueIPs = new Set(allAnomalies.map(a => a.ip_address)).size;
-
-      console.log(recentAnomalies)
 
       return {
         success: true,
