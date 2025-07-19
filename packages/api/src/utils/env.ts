@@ -3,7 +3,7 @@ import { z } from "zod";
 export const env = z.object({
 	NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 	PORT: z.string(),
-	DB_LOGGING: z.string().default("false"),
+	DB_LOGGING: z.string().default("true"),
 	DB_AUTO_MIGRATE: z.string().default("false"),
 	DATABASE_SSL: z.string().default("false"),
 	// Database configuration
@@ -12,11 +12,11 @@ export const env = z.object({
 	DATABASE_USER: z.string(),
 	DATABASE_PASSWORD: z.string(),
 	DATABASE_NAME: z.string(),
-	// Redis configuration
-	CACHE_ENV: z.string().optional(),
-	REDIS_URL: z.string().optional(),
 	// JWT configuration
 	JWT_SECRET: z.string(),
+	// Redis configuration
+	CACHE_ENV: z.enum(["development", "production"]).default("development"),
+	REDIS_URL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof env>;

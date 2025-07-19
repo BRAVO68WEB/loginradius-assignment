@@ -1,6 +1,5 @@
 import { DB } from '../libs/db';
 import infoLogs, { LogTypes } from '../libs/logger';
-import type { Database } from '../types/db';
 import crypto from 'node:crypto';
 
 // Helper for credential operations (same as existing pattern)

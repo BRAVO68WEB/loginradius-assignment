@@ -2,13 +2,16 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
-import coreRoutes from './core/routes';
-import { config } from './utils/env';
-import infoLogs, { LogTypes } from './libs/logger';
-import { Scalar } from '@scalar/hono-api-reference';
 import { openAPISpecs } from 'hono-openapi';
 
+import coreRoutes from './core/routes';
+import { config } from './utils/env';
+import { CacheClient } from './libs/cache';
+import infoLogs, { LogTypes } from './libs/logger';
+import { Scalar } from '@scalar/hono-api-reference';
+
 const app = new Hono();
+CacheClient.init();
 
 // Middleware
 app.use('*', cors());

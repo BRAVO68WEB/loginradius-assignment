@@ -52,7 +52,7 @@ export class AuthController {
         await AnomalyService.recordFailedLoginAttempt(c, userId);
 
         if (userId && userFailedAttempts >= 5) {
-          return c.json({ error: "Account Suspended!" }, 401);
+          return c.json({ error: "Account temporarily suspended due to too many failed attempts." }, 401);
         }
 
         return c.json({ error: loginResult.message }, 401);
@@ -64,7 +64,7 @@ export class AuthController {
       const isUserSuspended = await AnomalyService.isUserSuspended(user.id);
       if (isUserSuspended) {
         return c.json({ 
-          error: "User temporarily suspended due to too many failed login attempts" 
+          error: "Account temporarily suspended due to too many failed attempts." 
         }, 429);
       }
 

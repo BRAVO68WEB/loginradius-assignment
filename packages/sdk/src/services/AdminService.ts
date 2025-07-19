@@ -70,7 +70,7 @@ export class AdminService {
             total_recent_attempts: number;
             unique_users_affected: number;
             unique_ips_involved: number;
-            time_window_minutes: number;
+            blocked_ips: number;
         };
     }> {
         return this.httpRequest.request({

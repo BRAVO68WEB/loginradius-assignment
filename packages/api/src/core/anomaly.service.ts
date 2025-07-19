@@ -1,4 +1,5 @@
 import { DB } from '../libs/db';
+import { CacheClient } from '../libs/cache';
 import infoLogs, { LogTypes } from '../libs/logger';
 import type { Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
@@ -7,9 +8,8 @@ import crypto from 'node:crypto';
 export class AnomalyService {
   private static readonly USER_ATTEMPT_THRESHOLD = 5;
   private static readonly IP_ATTEMPT_THRESHOLD = 100;
-  private static readonly TIME_WINDOW_MINUTES = 15;
+  private static readonly IP_LOCKOUT_MINUTES = 5; // Changed to 5 minutes as per assignment
   private static readonly USER_LOCKOUT_MINUTES = 15;
-  private static readonly IP_LOCKOUT_MINUTES = 30;
 
   static async recordFailedLoginAttempt(c: Context, userId?: string) {
     try {
@@ -25,30 +25,59 @@ export class AnomalyService {
         ipAddress = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || '127.0.0.1';
       }
 
-      // Determine anomaly type based on context
-      const anomalyType = userId ? 'user_login_ratelimited' : 'ip_ratelimited';
+      // Handle IP rate limiting - create a new key for every request
+      const currentTimestamp = Date.now();
+      const ipRateLimitKey = `ip_ratelimit:${ipAddress}:${currentTimestamp}`;
+      
+      // Create a new key for this request with IP_LOCKOUT_MINUTES TTL
+      await CacheClient.set(ipRateLimitKey, '1', this.IP_LOCKOUT_MINUTES * 60);
+      
+      // Count how many keys exist for this IP
+      const ipKeys = await CacheClient.keys(`ip_ratelimit:${ipAddress}:*`);
+      const ipAttempts = ipKeys.length;
+      
+      // Check if IP should be permanently blocked
+      let ipBlocked = false;
+      if (ipAttempts >= this.IP_ATTEMPT_THRESHOLD) {
+        // Check if already permanently blocked
+        const existingBlock = await this.checkPermanentIpBlock(ipAddress);
+        if (!existingBlock) {
+          // Record permanent IP block in database
+          await db.insertInto('anomalies').values({
+            id: crypto.randomUUID(),
+            user_id: null, // null user_id indicates permanent IP block
+            ip_address: ipAddress,
+            anomaly_type: 'ip_ratelimited',
+            created_at: new Date(),
+            updated_at: new Date()
+          }).execute();
+          
+          infoLogs(`IP ${ipAddress} permanently blocked after ${ipAttempts} attempts in 5-minute window`, LogTypes.LOGS, 'AnomalyService');
+        }
+        ipBlocked = true;
+      } else {
+        // Check if IP was already permanently blocked
+        ipBlocked = await this.checkPermanentIpBlock(ipAddress);
+      }
 
-      // Record the anomaly in database
-      await db.insertInto('anomalies').values({
-        id: crypto.randomUUID(),
-        user_id: userId || null,
-        ip_address: ipAddress,
-        anomaly_type: anomalyType,
-        created_at: new Date(),
-        updated_at: new Date()
-      }).execute();
-
-      // Check if user should be suspended (only if userId provided)
+      // Handle user-level rate limiting (keep in database for 15-minute window)
       let userSuspended = false;
       if (userId) {
+        // Record user-level attempt in database
+        await db.insertInto('anomalies').values({
+          id: crypto.randomUUID(),
+          user_id: userId,
+          ip_address: ipAddress,
+          anomaly_type: 'user_login_ratelimited',
+          created_at: new Date(),
+          updated_at: new Date()
+        }).execute();
+
         userSuspended = await this.checkUserSuspension(userId);
       }
 
-      // Check if IP should be blocked
-      const ipBlocked = await this.checkIpBlock(ipAddress);
-
       infoLogs(
-        `Failed login attempt recorded. User: ${userId || 'unknown'}, IP: ${ipAddress}, UserSuspended: ${userSuspended}, IpBlocked: ${ipBlocked}`,
+        `Failed login attempt recorded. User: ${userId || 'unknown'}, IP: ${ipAddress} (${ipAttempts} attempts in window), UserSuspended: ${userSuspended}, IpBlocked: ${ipBlocked}`,
         LogTypes.LOGS,
         'AnomalyService'
       );
@@ -63,7 +92,7 @@ export class AnomalyService {
   static async getUserFailedAttempts(userId: string): Promise<number> {
     try {
       const db = await DB.getInstance();
-      const cutoffTime = new Date(Date.now() - this.TIME_WINDOW_MINUTES * 60 * 1000);
+      const cutoffTime = new Date(Date.now() - this.USER_LOCKOUT_MINUTES * 60 * 1000); // Use 15 minutes for user lockout
 
       const failedAttempts = await db
         .selectFrom('anomalies')
@@ -98,21 +127,21 @@ export class AnomalyService {
 
   static async isIpBlocked(ipAddress: string): Promise<boolean> {
     try {
-      const db = await DB.getInstance();
-      const cutoffTime = new Date(Date.now() - this.TIME_WINDOW_MINUTES * 60 * 1000);
+      // First check if IP is permanently blocked in database
+      const permanentBlock = await this.checkPermanentIpBlock(ipAddress);
+      if (permanentBlock) {
+        infoLogs(`IP ${ipAddress} is permanently blocked`, LogTypes.LOGS, 'AnomalyService');
+        return true;
+      }
 
-      // Count both types of anomalies for IP blocking
-      const failedAttempts = await db
-        .selectFrom('anomalies')
-        .select(['id'])
-        .where('ip_address', '=', ipAddress)
-        .where('created_at', '>=', cutoffTime)
-        .execute();
-
-      const isBlocked = failedAttempts.length >= this.IP_ATTEMPT_THRESHOLD;
+      // Then check current rate limit by counting keys in Redis
+      const ipKeys = await CacheClient.keys(`ip_ratelimit:${ipAddress}:*`);
+      const attemptCount = ipKeys.length;
+      
+      const isBlocked = attemptCount >= this.IP_ATTEMPT_THRESHOLD;
       
       if (isBlocked) {
-        infoLogs(`IP ${ipAddress} is blocked. Failed attempts: ${failedAttempts.length}`, LogTypes.LOGS, 'AnomalyService');
+        infoLogs(`IP ${ipAddress} is blocked. Current attempts: ${attemptCount}`, LogTypes.LOGS, 'AnomalyService');
       }
 
       return isBlocked;
@@ -122,9 +151,29 @@ export class AnomalyService {
     }
   }
 
+  private static async checkPermanentIpBlock(ipAddress: string): Promise<boolean> {
+    try {
+      const db = await DB.getInstance();
+      
+      const permanentBlock = await db
+        .selectFrom('anomalies')
+        .select(['id'])
+        .where('ip_address', '=', ipAddress)
+        .where('anomaly_type', '=', 'ip_ratelimited') // Use existing type for permanent blocks
+        .where('user_id', 'is', null) // Permanent blocks have no user_id
+        .limit(1)
+        .execute();
+
+      return permanentBlock.length > 0;
+    } catch (error) {
+      infoLogs(`Error checking permanent IP block: ${error}`, LogTypes.ERROR, 'AnomalyService');
+      return false;
+    }
+  }
+
   private static async checkUserSuspension(userId: string): Promise<boolean> {
     const db = await DB.getInstance();
-    const cutoffTime = new Date(Date.now() - this.TIME_WINDOW_MINUTES * 60 * 1000);
+    const cutoffTime = new Date(Date.now() - this.USER_LOCKOUT_MINUTES * 60 * 1000); // Use 15 minutes for user lockout
 
     const failedAttempts = await db
       .selectFrom('anomalies')
@@ -135,20 +184,6 @@ export class AnomalyService {
       .execute();
 
     return failedAttempts.length >= this.USER_ATTEMPT_THRESHOLD;
-  }
-
-  private static async checkIpBlock(ipAddress: string): Promise<boolean> {
-    const db = await DB.getInstance();
-    const cutoffTime = new Date(Date.now() - this.TIME_WINDOW_MINUTES * 60 * 1000);
-
-    const failedAttempts = await db
-      .selectFrom('anomalies')
-      .select(['id'])
-      .where('ip_address', '=', ipAddress)
-      .where('created_at', '>=', cutoffTime)
-      .execute();
-
-    return failedAttempts.length >= this.IP_ATTEMPT_THRESHOLD;
   }
 
   // Admin utility methods
@@ -177,11 +212,11 @@ export class AnomalyService {
   static async getAnomalyStats() {
     try {
       const db = await DB.getInstance();
-      const cutoffTime = new Date(Date.now() - this.TIME_WINDOW_MINUTES * 60 * 1000);
+      const cutoffTime = new Date(Date.now() - this.USER_LOCKOUT_MINUTES * 60 * 1000); // Use 15 minutes for stats
 
       const recentAnomalies = await db
         .selectFrom('anomalies')
-        .select(['user_id', 'ip_address'])
+        .select(['user_id', 'ip_address', 'anomaly_type'])
         .where('created_at', '>=', cutoffTime)
         .execute();
 
@@ -193,13 +228,15 @@ export class AnomalyService {
       const uniqueUsers = new Set(allAnomalies.filter(a => a.user_id).map(a => a.user_id)).size;
       const uniqueIPs = new Set(allAnomalies.map(a => a.ip_address)).size;
 
+      console.log(recentAnomalies)
+
       return {
         success: true,
         data: {
           total_recent_attempts: recentAnomalies.length,
           unique_users_affected: uniqueUsers,
           unique_ips_involved: uniqueIPs,
-          time_window_minutes: this.TIME_WINDOW_MINUTES
+          blocked_ips: recentAnomalies.filter(a => a.anomaly_type === 'ip_ratelimited').length,
         }
       };
     } catch (error) {

@@ -27,12 +27,6 @@ export async function up(db: Kysely<Database>): Promise<void> {
         .execute();
 
     await db.schema
-        .createIndex("users_username_idx")
-        .on("users")
-        .column("username")
-        .execute();
-
-    await db.schema
         .createTable("sessions")
         .addColumn("id", "text", col => col.primaryKey().notNull())
         .addColumn("user_id", "text", col => col.notNull())
@@ -58,11 +52,26 @@ export async function up(db: Kysely<Database>): Promise<void> {
         .addColumn("ip_address", "text")
         .addColumn("created_at", "timestamptz", col => col.notNull())
         .addColumn("updated_at", "timestamptz", col => col.notNull())
+        .addForeignKeyConstraint("fk_anomalies_user_id", ["user_id"], "users", ["id"])
         .execute();
 
     await db.schema
         .createIndex("anomalies_type_idx")
         .on("anomalies")
+        .column("anomaly_type")
+        .execute();
+
+    await db.schema
+        .createIndex("anomalies_user_id_anomaly_type_idx")
+        .on("anomalies")
+        .column("user_id")
+        .column("anomaly_type")
+        .execute();
+
+    await db.schema
+        .createIndex("anomalies_ip_address_anomaly_type_idx")
+        .on("anomalies")
+        .column("ip_address")
         .column("anomaly_type")
         .execute();
 }
