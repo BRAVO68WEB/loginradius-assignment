@@ -38,6 +38,8 @@ I went with a monorepo setup because honestly, managing separate repos for a pro
 - **Hono**: Lightweight, fast, and the middleware system just clicks with me
 - **Kysely**: I'm an ORM skeptic - give me type-safe SQL any day
 - **Docker**: For consistent deployments and easy local dev
+- **PostgreSQL**: Because I like my data structured and performant
+- **Redis**: For caching and rate limiting, because who doesn't love speed?
 - **Nginx**: For reverse proxy
 
 ## Building the API 🔧
@@ -139,6 +141,8 @@ static async recordFailedLoginAttempt(c: Context, userId?: string) {
 }
 ```
 
+Secondly, I build a strategy to detect IP-level blocking. For every request, create a KEY in Redis with a TTL of 5 minutes. If the count exceeds 100, block the IP for 15 minutes, and log the anomaly to DB to permanently block it.
+
 **Getting the real IP address** was trickier than expected. Had to handle X-Forwarded-For headers for proxy environments, plus fallbacks for different deployment scenarios.
 
 The progressive messaging feature was fun to implement. Instead of immediately showing "account suspended," the first 5 attempts show "Invalid credentials," then it switches to "Account Suspended!" This makes it less obvious to attackers when they've hit the threshold.
@@ -230,14 +234,15 @@ useEffect(() => {
 }, [token]);
 ```
 
+**Rate limiting** had to build a proper strategy to handle both user and IP limits simultaneously. I used Redis for fast access and TTLs to manage the sliding window.
+
 **IP detection** had to handle multiple scenarios - direct connections, proxies, load balancers. The fallback chain ended up being more complex than I initially planned.
 
 ## What Actually Works 🎯
 
-✅ **The core stuff**: 5 failed attempts = user suspended for 15 minutes, 100 attempts from an IP = blocked
+✅ **The core stuff**: 5 failed attempts = user suspended for 15 minutes, 100 failed attempts from an IP for any given user in 5 minutes = blocked
 ✅ **Progressive messaging**: Different error messages based on attempt count (this was surprisingly satisfying to implement)
 ✅ **Admin dashboard**: Real-time monitoring with auto-refresh every 5 seconds
-✅ **Type safety**: End-to-end TypeScript with auto-generated SDK
 
 The anomaly detection system handles both attack vectors simultaneously, and the admin dashboard gives you a real-time view of what's happening. Data persists across restarts, so you can't just restart the server to bypass the limits.
 
