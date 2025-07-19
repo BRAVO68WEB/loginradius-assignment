@@ -4,7 +4,8 @@ This repository contains the code for the Brute-Force Protected Login Applicatio
 
 ## Docs
 
-- [Dev Journey](docs/DEV%20JOURNEY.md)
+- [Dev Journey / Documentation / Guide](docs/DEV%20JOURNEY.md)
+- [Architectural Design](docs/ARCHITECTURAL%20DESIGN.md)
 - [Setup Guide](docs/SETUP.md)
 - [AI Usage](docs/AI%20USAGE.md)
 
