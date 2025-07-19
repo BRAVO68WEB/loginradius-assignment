@@ -2,7 +2,6 @@ import { DB } from '../libs/db';
 import { CacheClient } from '../libs/cache';
 import infoLogs, { LogTypes } from '../libs/logger';
 import type { Context } from 'hono';
-import { getConnInfo } from 'hono/bun';
 import crypto from 'node:crypto';
 
 export class AnomalyService {
@@ -16,14 +15,7 @@ export class AnomalyService {
       const db = await DB.getInstance();
       
       // Safely get IP address with fallback for test environment
-      let ipAddress = 'unknown';
-      try {
-        const connInfo = getConnInfo(c);
-        ipAddress = connInfo.remote.address || 'unknown';
-      } catch (error) {
-        // Fallback for test environment or when getConnInfo fails
-        ipAddress = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || '127.0.0.1';
-      }
+      let ipAddress = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || '127.0.0.1';
 
       // Handle IP rate limiting - create a new key for every request
       const currentTimestamp = Date.now();

@@ -60,15 +60,16 @@ app.get(
                 {
                     bearerAuth: [],
                 },
-                {
-                    apiKeyAuth: [],
-                },
             ],
             servers: [
                 {
                     url: "http://localhost:" + config.PORT,
                     description: "Local development server",
                 },
+                {
+                    url: "https://api.lra.b68.dev",
+                    description: "Production server",
+                }
             ],
         },
     }),
