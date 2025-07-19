@@ -47,7 +47,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const authenticatedSDK = getSDK(storedToken);
       authenticatedSDK.authentication.getAuthMe()
         .then((userData) => {
-          console.log('Restored user from token:', userData);
           setUser(userData);
         })
         .catch((error) => {
@@ -89,7 +88,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const authenticatedSDK = getSDK(token);
       const userData = await authenticatedSDK.authentication.getAuthMe();
-      console.log('Fetched user data:', userData);
       setUser(userData);
     } catch (error) {
       console.warn('Failed to fetch user data:', error);

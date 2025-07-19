@@ -79,7 +79,7 @@ export const AdminPage: React.FC = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5">
           <Card className="shadow-medium bg-gradient-card border-0">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -132,6 +132,20 @@ export const AdminPage: React.FC = () => {
             <CardContent>
               <div className="text-2xl font-bold text-foreground">
                 {statsLoading ? '...' : stats?.unique_ips_involved || 0}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-medium bg-gradient-card border-0">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Network className="h-4 w-4" />
+                Blacklisted IPs
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-foreground">
+                {statsLoading ? '...' : stats?.blocked_ips || 0}
               </div>
             </CardContent>
           </Card>
